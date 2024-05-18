@@ -11,6 +11,7 @@ maintainer:         diaz_carrete@yahoo.com
 category:           System
 build-type:         Simple
 extra-doc-files:    CHANGELOG.md
+                    README.md
 -- extra-source-files:
 
 common warnings
