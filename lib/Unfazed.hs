@@ -1,11 +1,15 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Unfazed
-  ( newStore,
+  ( StoreName,
+    newStore,
     queryStore,
+    StoreNotFound (..),
+    TypeMismatch (..),
   )
 where
 
@@ -19,61 +23,76 @@ import GHC.Conc.Sync (threadLabel)
 type StoreName = String
 
 newStore :: forall a. (Typeable a) => StoreName -> a -> IO ()
-newStore name value = do
-  let rep = typeRep (Proxy @a)
+newStore storeName value = do
+  let actualType = typeRep (Proxy @a)
   let loop = do
         e <- try @Query sleepForever
+        -- TODO: There might be async exception unsafety here.
         case e of
-          Left Query {queryThreadId, queryTypeRep} -> do
-            if queryTypeRep == rep
+          Left Query {queryThreadId, queryType} -> do
+            if queryType == actualType
               then throwTo queryThreadId Response {response = value}
-              else throwTo queryThreadId QueryError
-          Right () -> loop
+              else throwTo queryThreadId TypeMismatch {storeName, queryType, actualType}
+            loop
+          Right _ -> error "impossible, we sleep forever!"
   loopyId <- forkIO loop
-  _ <- labelThread loopyId name
+  _ <- labelThread loopyId storeName
   pure ()
 
 queryStore :: forall a. (Typeable a) => StoreName -> IO a
 queryStore name = do
   storeId <- findStore name
   queryThreadId <- myThreadId
-  let queryTypeRep = typeRep (Proxy @a)
+  let queryType = typeRep (Proxy @a)
   e <- try @(Response a) do
-    throwTo storeId Query {queryThreadId, queryTypeRep}
+    throwTo storeId Query {queryThreadId, queryType}
     sleepForever
   case e of
     Left (Response {response}) -> pure response
     Right _ -> error "impossible, we sleep forever!"
 
 findStore :: StoreName -> IO ThreadId
-findStore name = do
+findStore storeName = do
   threadList <- listThreads
   let go = \case
-        [] -> throwIO StoreNotFound
+        [] -> throwIO StoreNotFound {storeName}
         threadId : threadIds -> do
           mlabel <- threadLabel threadId
           case mlabel of
-            Just someName | someName == name -> pure threadId
+            Just someName | someName == storeName -> pure threadId
             _ -> go threadIds
   go threadList
 
 sleepForever :: IO x
 sleepForever = forever (threadDelay maxBound)
 
-data Query = Query {queryThreadId :: ThreadId, queryTypeRep :: TypeRep}
+data Query = Query {queryThreadId :: ThreadId, queryType :: TypeRep}
   deriving stock (Show)
-  deriving anyclass (Exception)
 
-data QueryError = QueryError
+instance Exception Query where
+  toException = asyncExceptionToException
+  fromException = asyncExceptionFromException
+
+data TypeMismatch = TypeMismatch
+  { storeName :: StoreName,
+    queryType :: TypeRep,
+    actualType :: TypeRep
+  }
   deriving stock (Show)
-  deriving anyclass (Exception)
+
+instance Exception TypeMismatch where
+  toException = asyncExceptionToException
+  fromException = asyncExceptionFromException
 
 data Response a = Response {response :: a}
-  deriving anyclass (Exception)
 
 instance Show (Response a) where
   show Response {} = "Response"
 
-data StoreNotFound = StoreNotFound
+instance (Typeable a) => Exception (Response a) where
+  toException = asyncExceptionToException
+  fromException = asyncExceptionFromException
+
+data StoreNotFound = StoreNotFound {storeName :: StoreName}
   deriving stock (Show)
   deriving anyclass (Exception)
