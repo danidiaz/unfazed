@@ -36,6 +36,7 @@ newStore storeName value = do
             loop
           Right _ -> error "impossible, we sleep forever!"
   loopyId <- forkIO loop
+  -- We label the helper thread in order to be able to find it after reloads.
   _ <- labelThread loopyId storeName
   pure ()
 
@@ -51,6 +52,7 @@ queryStore name = do
     Left (Response {response}) -> pure response
     Right _ -> error "impossible, we sleep forever!"
 
+-- | This might be slow if there are lots of threads.
 findStore :: StoreName -> IO ThreadId
 findStore storeName = do
   threadList <- listThreads
