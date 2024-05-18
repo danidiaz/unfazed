@@ -17,6 +17,7 @@ import Control.Concurrent
 import Control.Exception
 import Control.Monad
 import Data.Typeable
+import Data.Void
 import GHC.Conc
 import GHC.Conc.Sync (threadLabel)
 
@@ -34,7 +35,7 @@ newStore storeName value = do
               then throwTo queryThreadId Response {response = value}
               else throwTo queryThreadId TypeMismatch {storeName, queryType, actualType}
             loop
-          Right _ -> error "impossible, we sleep forever!"
+          Right x -> absurd x
   loopyId <- forkIO loop
   -- We label the helper thread in order to be able to find it after reloads.
   _ <- labelThread loopyId storeName
@@ -50,7 +51,7 @@ queryStore name = do
     sleepForever
   case e of
     Left (Response {response}) -> pure response
-    Right _ -> error "impossible, we sleep forever!"
+    Right x -> absurd x
 
 -- | This might be slow if there are lots of threads.
 findStore :: StoreName -> IO ThreadId
@@ -65,7 +66,7 @@ findStore storeName = do
             _ -> go threadIds
   go threadList
 
-sleepForever :: IO x
+sleepForever :: IO Void
 sleepForever = forever (threadDelay maxBound)
 
 data Query = Query {queryThreadId :: ThreadId, queryType :: TypeRep}
